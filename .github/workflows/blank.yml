@@ -1,5 +1,4 @@
-from pathlib import Path
-import zipfile
+
 
 base = Path("/mnt/data/github-workflow")
 workflow_dir = base / ".github" / "workflows"
@@ -103,4 +102,4 @@ zip_path = Path("/mnt/data/github-actions-workflow.zip")
 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
     z.write(file_path, ".github/workflows/node.yml")
 
-print(zip_path)
+
