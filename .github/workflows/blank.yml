@@ -1,334 +1,106 @@
 from pathlib import Path
-import zipfile, textwrap, json
+import zipfile
 
-root = Path("/mnt/data/soap_store")
-root.mkdir(parents=True, exist_ok=True)
+base = Path("/mnt/data/github-workflow")
+workflow_dir = base / ".github" / "workflows"
+workflow_dir.mkdir(parents=True, exist_ok=True)
 
-files = {
-"package.json": r'''{
-  "name": "soap-store",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "express": "^4.21.2",
-    "nodemailer": "^6.9.16"
-  }
-}''',
+workflow = """name: Build and Check Soap Store
 
-".env.example": r'''PORT=3000
-ORDER_EMAIL=pritampattnaik01@gmail.com
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=465
-SMTP_SECURE=true
-SMTP_USER=your-gmail-address@gmail.com
-SMTP_PASS=your-16-character-gmail-app-password
-STORE_NAME=Prakriti Soaps
-''',
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
-"server.js": r'''const express = require("express");
-const nodemailer = require("nodemailer");
-const path = require("path");
+jobs:
+  check:
+    runs-on: ubuntu-latest
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-const ORDER_EMAIL = process.env.ORDER_EMAIL || "pritampattnaik01@gmail.com";
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-app.post("/api/order", async (req, res) => {
-  try {
-    const { customer, items, total } = req.body || {};
-    if (!customer?.name || !customer?.phone || !customer?.address || !Array.isArray(items) || !items.length) {
-      return res.status(400).json({ ok: false, message: "Please fill all required order details." });
-    }
+      - name: Install dependencies
+        run: npm ci
 
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      return res.status(500).json({
-        ok: false,
-        message: "Email is not configured yet. Add SMTP_USER and SMTP_PASS in .env."
-      });
-    }
+      - name: Check server syntax
+        run: node --check server.js
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || "smtp.gmail.com",
-      port: Number(process.env.SMTP_PORT || 465),
-      secure: String(process.env.SMTP_SECURE || "true") === "true",
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    });
+      - name: Check frontend files
+        run: |
+          test -f public/index.html
+          test -f public/style.css
+          test -f public/script.js
 
-    const itemRows = items.map(i =>
-      `<tr>
-        <td style="padding:8px;border-bottom:1px solid #ddd">${escapeHtml(i.name)}</td>
-        <td style="padding:8px;border-bottom:1px solid #ddd">${i.qty}</td>
-        <td style="padding:8px;border-bottom:1px solid #ddd">₹${Number(i.price).toFixed(2)}</td>
-      </tr>`
-    ).join("");
+      - name: Verify project
+        run: echo "Prakriti Soaps website checks passed successfully."
+"""
 
-    const html = `
-      <div style="font-family:Arial,sans-serif;max-width:700px;margin:auto">
-        <h2>New Order — ${escapeHtml(process.env.STORE_NAME || "Prakriti Soaps")}</h2>
-        <p><b>Customer:</b> ${escapeHtml(customer.name)}</p>
-        <p><b>Phone:</b> ${escapeHtml(customer.phone)}</p>
-        <p><b>Email:</b> ${escapeHtml(customer.email || "Not provided")}</p>
-        <p><b>Address:</b><br>${escapeHtml(customer.address).replace(/\n/g, "<br>")}</p>
-        <h3>Order items</h3>
-        <table style="border-collapse:collapse;width:100%">
-          <thead><tr><th style="text-align:left;padding:8px">Product</th><th style="text-align:left;padding:8px">Qty</th><th style="text-align:left;padding:8px">Price</th></tr></thead>
-          <tbody>${itemRows}</tbody>
-        </table>
-        <h3>Total: ₹${Number(total || 0).toFixed(2)}</h3>
-      </div>`;
+file_path = workflow_dir / "node.yml"
+file_path.write_text(workflow, encoding="utf-8")
 
-    await transporter.sendMail({
-      from: `"${process.env.STORE_NAME || "Prakriti Soaps"}" <${process.env.SMTP_USER}>`,
-      to: ORDER_EMAIL,
-      replyTo: customer.email || undefined,
-      subject: `New order from ${customer.name} — ₹${Number(total || 0).toFixed(2)}`,
-      html
-    });
-
-    res.json({ ok: true, message: "Order received successfully." });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, message: "Could not send the order email." });
-  }
-});
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-app.listen(PORT, () => {
-  console.log(`Store running at http://localhost:${PORT}`);
-});
-''',
-
-"public/index.html": r'''<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Prakriti Soaps — Nature + Science</title>
-  <meta name="description" content="Premium handmade soaps inspired by nature and science.">
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <div class="announcement">ENJOY FREE SHIPPING ON PREPAID ORDERS + EXCITING FREEBIES 🎁</div>
-
-  <header>
-    <div class="topbar">
-      <button class="shop-all" onclick="scrollToProducts()">Shop All</button>
-      <div class="search"><input id="search" placeholder="Search"><span>⌕</span></div>
-      <a class="logo" href="#">Prakriti<small>SOAPS</small><em>NATURE + SCIENCE</em></a>
-      <div class="header-actions"><a href="#order">Track Shipment</a><button onclick="openCart()">🛍 <b id="cartCount">0</b></button></div>
-    </div>
-    <nav>
-      <a href="#new">New Launches</a>
-      <a href="#categories">Shop By Category⌄</a>
-      <a href="#concern">Shop By Concern⌄</a>
-      <a href="#combos">Combos</a>
-      <a href="#bulk">Bulk Order</a>
-    </nav>
-  </header>
-
-  <main>
-    <section class="hero" id="new">
-      <div class="hero-copy">
-        <span class="pill">AYURVEDA × MODERN SCIENCE</span>
-        <h1>Pure care.<br><i>Beautiful skin.</i></h1>
-        <p>Handcrafted bathing bars made with nourishing oils, botanicals and a little everyday luxury.</p>
-        <button class="primary" onclick="scrollToProducts()">Shop Bestsellers →</button>
-      </div>
-      <div class="hero-art">
-        <div class="seal">INDIA'S<br><strong>NO.1</strong><br><small>INSPIRED</small></div>
-        <div class="soap-stack">
-          <div class="person-shape"></div>
-          <div class="soap s1">SAFFRON<br><small>SOAP</small></div>
-          <div class="soap s2">SANDALWOOD<br><small>SOAP</small></div>
-          <div class="soap s3">TURMERIC<br><small>SOAP</small></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="categories">
-      <div class="section-head"><div><span class="eyebrow">SHOP THE RANGE</span><h2>Made for your skin concern</h2></div></div>
-      <div class="chips">
-        <button onclick="filterProducts('all')">All</button><button onclick="filterProducts('tan')">Tan Care</button>
-        <button onclick="filterProducts('glow')">Glow</button><button onclick="filterProducts('dry')">Dry Skin</button>
-        <button onclick="filterProducts('acne')">Acne Care</button>
-      </div>
-    </section>
-
-    <section class="section products" id="products">
-      <div class="product-grid" id="productGrid"></div>
-    </section>
-
-    <section class="feature">
-      <div><span class="eyebrow">WHY PRAKRITI</span><h2>Nature-led formulas,<br>made for daily rituals.</h2></div>
-      <div class="feature-list">
-        <div><b>01</b><span>Plant-powered ingredients</span></div>
-        <div><b>02</b><span>Small-batch handcrafted bars</span></div>
-        <div><b>03</b><span>Fresh, gentle fragrances</span></div>
-      </div>
-    </section>
-
-    <section class="order-section" id="order">
-      <div class="order-card">
-        <div>
-          <span class="eyebrow">CHECKOUT</span>
-          <h2>Place your order</h2>
-          <p>Your order details will be emailed directly to <b>pritampattnaik01@gmail.com</b>.</p>
-        </div>
-        <form id="orderForm">
-          <div class="two"><input id="name" required placeholder="Full name"><input id="phone" required placeholder="Phone number"></div>
-          <div class="two"><input id="email" type="email" placeholder="Email address"><input id="pincode" placeholder="PIN code"></div>
-          <textarea id="address" required placeholder="Full delivery address"></textarea>
-          <div class="summary"><span>Order total</span><strong id="orderTotal">₹0</strong></div>
-          <button class="primary full" type="submit">Confirm Order →</button>
-          <p class="form-note" id="formNote"></p>
-        </form>
-      </div>
-    </section>
-  </main>
-
-  <div class="cart-drawer" id="cartDrawer">
-    <div class="cart-head"><h3>Your Cart</h3><button onclick="closeCart()">×</button></div>
-    <div id="cartItems"></div>
-    <div class="cart-bottom"><div><span>Total</span><strong id="cartTotal">₹0</strong></div><button class="primary full" onclick="goToOrder()">Checkout →</button></div>
-  </div>
-  <div class="overlay" id="overlay" onclick="closeCart()"></div>
-
-  <footer><div class="logo">Prakriti<small>SOAPS</small><em>NATURE + SCIENCE</em></div><p>Handmade with care · India</p></footer>
-  <script src="script.js"></script>
-</body>
-</html>''',
-
-"public/style.css": r''':root{
-  --cream:#fbf2e4;--peach:#f6d5bd;--peach2:#f3c3a6;--ink:#171412;--brown:#8b5b32;
-  --green:#277d39;--line:#29221d;--white:#fffaf3;
-}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:var(--ink);background:var(--cream)}
-button,input,textarea{font:inherit}.announcement{background:#24201f;color:#fff;text-align:center;font-weight:800;letter-spacing:3px;padding:16px;font-size:14px}
-header{background:var(--cream);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}.topbar{height:142px;display:grid;grid-template-columns:1fr 330px 1fr;align-items:center;gap:20px;padding:0 4%}
-.shop-all,.header-actions button{border:0;background:none;font-weight:800;font-size:18px;cursor:pointer}.search{border:1px solid var(--line);border-radius:40px;padding:10px 18px;display:flex}.search input{border:0;outline:0;background:none;width:100%;font-size:18px}.search span{font-size:32px}.logo{text-align:center;font-size:56px;font-weight:900;line-height:.7;text-decoration:none;color:var(--ink);letter-spacing:-4px}.logo small{font-size:16px;letter-spacing:0;margin-left:5px}.logo em{display:block;font-style:normal;font-size:13px;letter-spacing:5px;margin-top:14px}
-.header-actions{display:flex;justify-content:flex-end;gap:30px;align-items:center}.header-actions a{color:var(--ink);font-weight:800;text-decoration:none}.header-actions b{font-size:12px;background:#e84b2a;color:white;border-radius:20px;padding:3px 6px}
-nav{display:flex;justify-content:space-around;padding:16px 4%;border-top:1px solid var(--line);font-weight:800;font-size:19px}nav a{color:var(--ink);text-decoration:none}
-.hero{min-height:640px;background:#f7d8c3;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line);overflow:hidden}.hero-copy{padding:110px 8%}.eyebrow{font-size:13px;font-weight:900;letter-spacing:3px}.hero h1{font-size:72px;line-height:.92;margin:22px 0}.hero h1 i{font-family:Georgia,serif;font-weight:400}.hero p{max-width:520px;font-size:20px;line-height:1.5}.primary{background:var(--ink);color:white;border:0;border-radius:3px;padding:17px 26px;font-weight:800;cursor:pointer;margin-top:18px}.hero-art{position:relative;min-height:640px}.seal{position:absolute;top:70px;left:45%;z-index:3;background:#7b4a25;color:#fff7df;border:9px solid #c89644;outline:3px solid #5d391d;width:145px;height:145px;border-radius:50%;text-align:center;padding-top:25px;font-weight:900}.seal strong{font-size:30px}.soap-stack{position:absolute;inset:auto 8% 20px 12%;height:480px}.person-shape{position:absolute;left:5%;bottom:0;width:150px;height:350px;background:linear-gradient(#198dd3 0 35%,#0d8bd3 35% 75%,#e9c6a5 75%);border-radius:60px 60px 30px 30px;transform:skew(-3deg)}
-.soap{position:absolute;bottom:75px;width:230px;height:145px;border-radius:20px;background:linear-gradient(135deg,#bd874c,#8f6237);box-shadow:0 18px 30px #81543255;color:#553a23;text-align:center;padding-top:42px;font-size:20px;font-weight:900}.soap small{font-size:12px}.s1{left:30%}.s2{left:52%}.s3{left:74%}
-.section{padding:70px 6%}.section-head h2,.feature h2,.order-card h2{font-size:44px;margin:12px 0}.chips{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}.chips button{background:transparent;border:1px solid var(--ink);border-radius:30px;padding:11px 22px;cursor:pointer}.chips button:hover{background:var(--ink);color:#fff}
-.products{padding-top:0}.product-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:22px}.card{background:var(--white);border:1px solid #bca996}.product-img{height:270px;background:#efd1b9;display:grid;place-items:center;position:relative}.bar{width:145px;height:95px;border-radius:14px;background:linear-gradient(135deg,#b8793d,#85582e);box-shadow:0 18px 30px #754b2c55;color:#fff0d7;display:grid;place-items:center;text-align:center;font-weight:900}.tag{position:absolute;top:14px;left:14px;background:#fff;color:var(--ink);padding:7px 10px;font-size:11px;font-weight:900}.card-body{padding:18px}.card h3{margin:0 0 8px;font-size:20px}.rating{font-size:13px;margin-bottom:12px}.price{font-weight:900;font-size:21px}.old{text-decoration:line-through;color:#777;font-size:14px;margin-right:8px}.add{width:100%;margin-top:15px;padding:12px;border:1px solid var(--ink);background:transparent;font-weight:800;cursor:pointer}.add:hover{background:var(--ink);color:#fff}
-.feature{background:#e9d9c7;padding:80px 8%;display:grid;grid-template-columns:1fr 1fr;gap:70px}.feature-list div{display:flex;gap:20px;border-bottom:1px solid #8f7c6b;padding:20px 0;font-size:22px}.feature-list b{font-size:13px}
-.order-section{padding:80px 6%;background:#f4cdb3}.order-card{max-width:1000px;margin:auto;background:var(--white);padding:45px;display:grid;grid-template-columns:.8fr 1.2fr;gap:50px;border:1px solid var(--line)}.order-card p{line-height:1.6}.order-card form{display:grid;gap:13px}.two{display:grid;grid-template-columns:1fr 1fr;gap:13px}input,textarea{border:1px solid #8d7d6d;background:#fffaf3;padding:15px;outline:0}textarea{min-height:120px;resize:vertical}.summary{display:flex;justify-content:space-between;font-size:20px;padding:15px 0;border-top:1px solid #ddd}.full{width:100%}.form-note{text-align:center;font-weight:800}
-.cart-drawer{position:fixed;z-index:30;right:-440px;top:0;height:100%;width:min(440px,100%);background:var(--cream);transition:.3s;padding:25px;display:flex;flex-direction:column;box-shadow:-20px 0 50px #0002}.cart-drawer.open{right:0}.cart-head{display:flex;justify-content:space-between;border-bottom:1px solid #aaa}.cart-head button{border:0;background:none;font-size:30px}.cart-row{display:grid;grid-template-columns:1fr auto;gap:10px;padding:18px 0;border-bottom:1px solid #ddd}.qty button{border:1px solid #999;background:none;width:28px;height:28px}.cart-bottom{margin-top:auto;border-top:1px solid #aaa;padding-top:20px}.cart-bottom>div{display:flex;justify-content:space-between;font-size:20px}.overlay{position:fixed;inset:0;background:#0005;z-index:20;display:none}.overlay.show{display:block}
-footer{padding:45px 6%;display:flex;justify-content:space-between;align-items:center}footer .logo{font-size:34px;text-align:left}
-@media(max-width:900px){.topbar{grid-template-columns:1fr auto;height:auto;padding:20px}.search{display:none}.logo{font-size:40px}.header-actions a{display:none}nav{font-size:14px;gap:15px;overflow:auto;justify-content:flex-start}.hero{grid-template-columns:1fr}.hero-copy{padding:70px 8%}.hero-art{min-height:450px}.hero h1{font-size:54px}.product-grid{grid-template-columns:repeat(2,1fr)}.feature,.order-card{grid-template-columns:1fr}.order-card{padding:28px}}
-@media(max-width:560px){.product-grid{grid-template-columns:1fr}.two{grid-template-columns:1fr}.section{padding:50px 5%}.hero-art{min-height:360px}.soap{width:150px}.s1{left:20%}.s2{left:45%}.s3{left:70%}.person-shape{width:110px;height:270px}.seal{left:45%;width:115px;height:115px;font-size:11px;padding-top:20px}.seal strong{font-size:22px}}
-''',
-
-"public/script.js": r'''const products = [
-  {id:1,name:"Saffron Sandalwood Magic Bar",price:399,old:470,cat:"tan",tag:"BESTSELLER"},
-  {id:2,name:"Turmeric Glow Soap",price:299,old:349,cat:"glow",tag:"GLOW"},
-  {id:3,name:"Oat & Honey Bath Bar",price:329,old:379,cat:"dry",tag:"DRY SKIN"},
-  {id:4,name:"Neem Tea Tree Cleanser Bar",price:289,old:329,cat:"acne",tag:"ACNE CARE"},
-  {id:5,name:"Coffee De-Tan Scrub Bar",price:319,old:369,cat:"tan",tag:"NEW"},
-  {id:6,name:"Aloe Vera Gentle Bar",price:279,old:319,cat:"dry",tag:"GENTLE"},
-  {id:7,name:"Rose Saffron Luxury Bar",price:349,old:399,cat:"glow",tag:"LUXURY"},
-  {id:8,name:"Multani Mitti Purifying Bar",price:299,old:349,cat:"acne",tag:"PURIFY"}
-];
-let cart = JSON.parse(localStorage.getItem("soapCart") || "[]");
-
-const money = n => `₹${Number(n).toFixed(0)}`;
-function renderProducts(list=products){
-  document.getElementById("productGrid").innerHTML = list.map(p => `
-    <article class="card">
-      <div class="product-img"><span class="tag">${p.tag}</span><div class="bar">${p.name.split(" ")[0]}<br><small>SOAP</small></div></div>
-      <div class="card-body"><div class="rating">★★★★★ <span>4.8</span></div><h3>${p.name}</h3><div><span class="old">${money(p.old)}</span><span class="price">${money(p.price)}</span></div><button class="add" onclick="addToCart(${p.id})">ADD TO CART</button></div>
-    </article>`).join("");
-}
-function addToCart(id){
-  const found=cart.find(x=>x.id===id); found?found.qty++:cart.push({id,qty:1});
-  save(); openCart();
-}
-function save(){localStorage.setItem("soapCart",JSON.stringify(cart));renderCart();document.getElementById("cartCount").textContent=cart.reduce((s,x)=>s+x.qty,0)}
-function renderCart(){
-  const box=document.getElementById("cartItems");
-  if(!cart.length){box.innerHTML="<p>Your cart is empty.</p>";}
-  else box.innerHTML=cart.map(x=>{const p=products.find(a=>a.id===x.id);return `<div class="cart-row"><div><b>${p.name}</b><br>${money(p.price)} × ${x.qty}</div><div class="qty"><button onclick="changeQty(${p.id},-1)">−</button> <button onclick="changeQty(${p.id},1)">+</button></div></div>`}).join("");
-  const total=cart.reduce((s,x)=>s+products.find(p=>p.id===x.id).price*x.qty,0);
-  document.getElementById("cartTotal").textContent=money(total);
-  document.getElementById("orderTotal").textContent=money(total);
-}
-function changeQty(id,d){const x=cart.find(a=>a.id===id);if(!x)return;x.qty+=d;if(x.qty<=0)cart=cart.filter(a=>a.id!==id);save()}
-function openCart(){document.getElementById("cartDrawer").classList.add("open");document.getElementById("overlay").classList.add("show");renderCart()}
-function closeCart(){document.getElementById("cartDrawer").classList.remove("open");document.getElementById("overlay").classList.remove("show")}
-function goToOrder(){closeCart();document.getElementById("order").scrollIntoView({behavior:"smooth"})}
-function scrollToProducts(){document.getElementById("products").scrollIntoView({behavior:"smooth"})}
-function filterProducts(cat){renderProducts(cat==="all"?products:products.filter(p=>p.cat===cat));scrollToProducts()}
-document.getElementById("search").addEventListener("input",e=>{const q=e.target.value.toLowerCase();renderProducts(products.filter(p=>p.name.toLowerCase().includes(q)))});
-document.getElementById("orderForm").addEventListener("submit",async e=>{
-  e.preventDefault();
-  if(!cart.length){document.getElementById("formNote").textContent="Add at least one product to the cart.";return}
-  const items=cart.map(x=>{const p=products.find(a=>a.id===x.id);return {name:p.name,price:p.price,qty:x.qty}});
-  const total=items.reduce((s,x)=>s+x.price*x.qty,0);
-  const customer={name:name.value,phone:phone.value,email:email.value,address:address.value+(pincode.value?`\\nPIN: ${pincode.value}`:"")};
-  const note=document.getElementById("formNote");note.textContent="Sending order…";
-  try{
-    const r=await fetch("/api/order",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({customer,items,total})});
-    const data=await r.json();
-    note.textContent=data.message;
-    if(data.ok){cart=[];save();e.target.reset()}
-  }catch(err){note.textContent="Server connection error. Please try again."}
-});
-renderProducts();save();
-'''
-}
-
-for rel, content in files.items():
-    p = root / rel
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
-
-readme = root / "README.md"
-readme.write_text("""# Prakriti Soaps — Ecommerce Starter
-
-A responsive soap-store website inspired by the uploaded reference: cream/peach palette, centered logo, category navigation, product cards, cart drawer and checkout.
-
-## Run locally
-
-1. Install Node.js.
-2. Open a terminal in this folder.
-3. Run `npm install`.
-4. Copy `.env.example` to `.env`.
-5. Add your SMTP/Gmail credentials.
-6. Run `npm start`.
-7. Open http://localhost:3000
-
-Orders are sent to `pritampattnaik01@gmail.com`.
-
-### Gmail setup
-Use a Google App Password for `SMTP_PASS`; do not put your normal Gmail password in the project.
-
-## Important
-The screenshot's brand/logo/assets are used only as a visual reference. Replace the sample brand name and product content with your own branding before launch.
-""", encoding="utf-8")
-
-zip_path = Path("/mnt/data/prakriti-soaps-website.zip")
+zip_path = Path("/mnt/data/github-actions-workflow.zip")
 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-    for p in root.rglob("*"):
-        if p.is_file():
-            z.write(p, p.relative_to(root))
+    z.write(file_path, ".github/workflows/node.yml")
 
-print(f"Created: {zip_path}")
-print("Files:", len(files) + 1)
+print(zip_path)
+from pathlib import Path
+import zipfile
+
+base = Path("/mnt/data/github-workflow")
+workflow_dir = base / ".github" / "workflows"
+workflow_dir.mkdir(parents=True, exist_ok=True)
+
+workflow = """name: Build and Check Soap Store
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check server syntax
+        run: node --check server.js
+
+      - name: Check frontend files
+        run: |
+          test -f public/index.html
+          test -f public/style.css
+          test -f public/script.js
+
+      - name: Verify project
+        run: echo "Prakriti Soaps website checks passed successfully."
+"""
+
+file_path = workflow_dir / "node.yml"
+file_path.write_text(workflow, encoding="utf-8")
+
+zip_path = Path("/mnt/data/github-actions-workflow.zip")
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+    z.write(file_path, ".github/workflows/node.yml")
+
+print(zip_path)
